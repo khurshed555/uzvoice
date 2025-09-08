@@ -2,9 +2,20 @@ import { Telegraf, Markup, Context } from 'telegraf'
 import { CallbackQuery } from 'telegraf/types'
 import { PrismaClient } from '@prisma/client'
 import { t, getRegions, type Language } from './i18n'
+import { logger } from '../lib/logger'
 
 const prisma = new PrismaClient()
 const bot = new Telegraf(process.env.TELEGRAM_BOT_TOKEN!)
+
+// Helper function to get user info for logging
+function getUserInfo(ctx: any) {
+  return {
+    id: ctx.from?.id?.toString(),
+    username: ctx.from?.username || ctx.from?.first_name || 'Unknown',
+    firstName: ctx.from?.first_name,
+    lastName: ctx.from?.last_name
+  }
+}
 
 interface SessionData {
   step?: 'waiting_language' | 'waiting_region' | 'waiting_name' | 'registered'
@@ -27,7 +38,14 @@ const getSession = (userId: string): SessionData => {
 // Start command - handle both new and existing users
 bot.start(async (ctx) => {
   const tgid = ctx.from?.id.toString()
-  if (!tgid) return
+  const userInfo = getUserInfo(ctx)
+  
+  if (!tgid) {
+    logger.warn('Start command received with no user ID', {}, undefined, userInfo.username)
+    return
+  }
+  
+  logger.userAction('start_command', tgid, userInfo.username)
 
   try {
     // Check if user already exists
@@ -37,6 +55,11 @@ bot.start(async (ctx) => {
 
     if (existingUser) {
       // Existing user - show welcome message and topics
+      logger.userAction('returning_user', tgid, userInfo.username, {
+        language: existingUser.language,
+        region: existingUser.region
+      })
+      
       const session = getSession(tgid)
       session.language = existingUser.language as Language
       session.step = 'registered'
@@ -52,6 +75,8 @@ bot.start(async (ctx) => {
     }
 
     // New user - force language selection first
+    logger.userAction('new_user_registration_start', tgid, userInfo.username)
+    
     const session = getSession(tgid)
     session.step = 'waiting_language'
 
@@ -60,7 +85,7 @@ bot.start(async (ctx) => {
       getLanguageKeyboard()
     )
   } catch (error) {
-    console.error('Error in start command:', error)
+    logger.error('Error in start command', error, tgid, userInfo.username)
     await ctx.reply(t('unexpectedError', 'uz'), { parse_mode: 'HTML' })
   }
 })
@@ -68,11 +93,17 @@ bot.start(async (ctx) => {
 // Handle language selection
 bot.action(/^lang_(.+)$/, async (ctx) => {
   const tgid = ctx.from?.id.toString()
+  const userInfo = getUserInfo(ctx)
   const match = ctx.match
   if (!match) return
   const language = match[1] as Language
   
-  if (!tgid || !['uz', 'en'].includes(language)) return
+  if (!tgid || !['uz', 'en'].includes(language)) {
+    logger.warn('Invalid language selection', { language }, tgid, userInfo.username)
+    return
+  }
+  
+  logger.userAction('language_selected', tgid, userInfo.username, { language })
 
   try {
     const session = getSession(tgid)
@@ -85,6 +116,11 @@ bot.action(/^lang_(.+)$/, async (ctx) => {
 
     if (existingUser) {
       // Update existing user's language
+      logger.userAction('language_changed', tgid, userInfo.username, { 
+        oldLanguage: existingUser.language,
+        newLanguage: language 
+      })
+      
       await prisma.user.update({
         where: { tgid },
         data: { language }
@@ -111,7 +147,7 @@ bot.action(/^lang_(.+)$/, async (ctx) => {
       { reply_markup: getRegionKeyboard(language).reply_markup, parse_mode: 'HTML' }
     )
   } catch (error) {
-    console.error('Error selecting language:', error)
+    logger.error('Error selecting language', error, tgid, userInfo.username)
     await ctx.answerCbQuery(t('error', language || 'uz'))
   }
 })
@@ -119,11 +155,15 @@ bot.action(/^lang_(.+)$/, async (ctx) => {
 // Handle region selection
 bot.action(/^region_(.+)$/, async (ctx) => {
   const tgid = ctx.from?.id.toString()
+  const userInfo = getUserInfo(ctx)
   const match = ctx.match
   if (!match) return
   const regionIndex = parseInt(match[1])
   
-  if (!tgid) return
+  if (!tgid) {
+    logger.warn('Region selection with no user ID', { regionIndex }, undefined, userInfo.username)
+    return
+  }
 
   try {
     const session = getSession(tgid)
@@ -135,6 +175,12 @@ bot.action(/^region_(.+)$/, async (ctx) => {
     const selectedRegion = regions[regionIndex]
 
     if (session.step === 'waiting_region') {
+      logger.userAction('region_selected', tgid, userInfo.username, { 
+        region: selectedRegion,
+        regionIndex,
+        language: lang 
+      })
+      
       session.selectedRegion = selectedRegion
       session.step = 'waiting_name'
       
@@ -155,6 +201,7 @@ bot.action(/^region_(.+)$/, async (ctx) => {
 // Handle name input
 bot.on('text', async (ctx) => {
   const tgid = ctx.from?.id.toString()
+  const userInfo = getUserInfo(ctx)
   if (!tgid) return
 
   const session = getSession(tgid)
@@ -165,13 +212,21 @@ bot.on('text', async (ctx) => {
       if (!name) return
 
       // Create user
+      const userData = {
+        tgid,
+        name,
+        region: session.selectedRegion,
+        language: session.language
+      }
+      
       const newUser = await prisma.user.create({
-        data: {
-          tgid,
-          name,
-          region: session.selectedRegion,
-          language: session.language
-        }
+        data: userData
+      })
+      
+      logger.userRegistration(tgid, userInfo.username, {
+        name,
+        region: session.selectedRegion,
+        language: session.language
       })
 
       session.step = 'registered'
@@ -186,7 +241,7 @@ bot.on('text', async (ctx) => {
 
       await showTopics(ctx, newUser.id, session.language, false)
     } catch (error) {
-      console.error('Error creating user:', error)
+      logger.error('Error creating user', error, tgid, userInfo.username)
       await ctx.reply(t('registrationError', session.language || 'uz'), { parse_mode: 'HTML' })
     }
   }
@@ -198,15 +253,22 @@ bot.action(/^topic_(.+)$/, async (ctx) => {
   if (!match) return
   const topicId = match[1]
   const tgid = ctx.from?.id.toString()
+  const userInfo = getUserInfo(ctx)
   
-  if (!tgid) return
+  if (!tgid) {
+    logger.warn('Topic selection with no user ID', { topicId }, undefined, userInfo.username)
+    return
+  }
 
   try {
     const user = await prisma.user.findUnique({ where: { tgid } })
     if (!user) {
+      logger.warn('Unregistered user trying to select topic', { topicId }, tgid, userInfo.username)
       await ctx.answerCbQuery(t('registerFirst', 'uz'))
       return
     }
+    
+    logger.userAction('topic_selected', tgid, userInfo.username, { topicId })
 
     const session = getSession(tgid)
     session.currentTopicId = topicId
@@ -220,6 +282,11 @@ bot.action(/^topic_(.+)$/, async (ctx) => {
       const topic = await prisma.topic.findUnique({ where: { id: topicId } })
       const topicName = user.language === 'uz' ? topic?.nameUz : topic?.nameEn
       
+      logger.userAction('topic_already_completed', tgid, userInfo.username, { 
+        topicId, 
+        topicName 
+      })
+      
       await ctx.answerCbQuery(
         `✅ ${t('topicCompleted', user.language as Language, { topicName: topicName || '' })}`,
         { show_alert: true }
@@ -230,7 +297,7 @@ bot.action(/^topic_(.+)$/, async (ctx) => {
     session.currentQuestionIndex = firstUnansweredIndex
     await showQuestion(ctx, user.id, topicId, firstUnansweredIndex, user.language as Language)
   } catch (error) {
-    console.error('Error selecting topic:', error)
+    logger.error('Error selecting topic', error, tgid, userInfo.username)
     await ctx.answerCbQuery(t('error', 'uz'))
   }
 })
@@ -242,8 +309,12 @@ bot.action(/^answer_(.+)_(.+)$/, async (ctx) => {
   const questionId = match[1]
   const optionIndex = parseInt(match[2])
   const tgid = ctx.from?.id.toString()
+  const userInfo = getUserInfo(ctx)
   
-  if (!tgid) return
+  if (!tgid) {
+    logger.warn('Answer selection with no user ID', { questionId, optionIndex }, undefined, userInfo.username)
+    return
+  }
 
   try {
     const user = await prisma.user.findUnique({ where: { tgid } })
@@ -261,6 +332,11 @@ bot.action(/^answer_(.+)_(.+)$/, async (ctx) => {
 
     // If user clicks on the same answer they already selected, just show feedback
     if (existingAnswer && existingAnswer.optionKey === optionIndex.toString()) {
+      logger.userAction('answer_reselected', tgid, userInfo.username, {
+        questionId,
+        option: existingAnswer.option,
+        optionIndex
+      })
       await ctx.answerCbQuery(`✅ ${t('selected', user.language as Language, { option: existingAnswer.option })}`, { show_alert: false })
       return
     }
@@ -276,6 +352,8 @@ bot.action(/^answer_(.+)_(.+)$/, async (ctx) => {
     const selectedOption = options[optionIndex]
 
     // Save or update answer
+    const isUpdate = !!existingAnswer
+    
     await prisma.answer.upsert({
       where: {
         userId_questionId: {
@@ -293,6 +371,15 @@ bot.action(/^answer_(.+)_(.+)$/, async (ctx) => {
         option: selectedOption,
         optionKey: optionIndex.toString()
       }
+    })
+    
+    logger.questionAnswer(tgid, questionId, selectedOption, userInfo.username)
+    logger.userAction(isUpdate ? 'answer_updated' : 'answer_given', tgid, userInfo.username, {
+      questionId,
+      selectedOption,
+      optionIndex,
+      topicId: question.topicId,
+      questionText: lang === 'uz' ? question.nameUz : question.nameEn
     })
 
     await ctx.answerCbQuery(t('selected', lang, { option: selectedOption }))
@@ -322,6 +409,12 @@ bot.action(/^answer_(.+)_(.+)$/, async (ctx) => {
         } else {
           // No more unanswered questions in this topic
           const topicName = lang === 'uz' ? question.topic.nameUz : question.topic.nameEn
+          
+          logger.userAction('topic_completed', tgid, userInfo.username, {
+            topicId: question.topicId,
+            topicName
+          })
+          
           await ctx.editMessageText(
             `🎉 <b>${t('topicCompleted', lang, { topicName })}</b>\n\n` +
             t('selectOtherTopics', lang),
@@ -335,7 +428,7 @@ bot.action(/^answer_(.+)_(.+)$/, async (ctx) => {
     }, 1000)
     
   } catch (error) {
-    console.error('Error saving answer:', error)
+    logger.error('Error saving answer', error, tgid, userInfo.username)
     const user = await prisma.user.findUnique({ where: { tgid: tgid || '' } })
     const lang = user?.language as Language || 'uz'
     await ctx.answerCbQuery(t('error', lang))
@@ -345,15 +438,18 @@ bot.action(/^answer_(.+)_(.+)$/, async (ctx) => {
 // Back to topics
 bot.action('back_to_topics', async (ctx) => {
   const tgid = ctx.from?.id.toString()
+  const userInfo = getUserInfo(ctx)
   if (!tgid) return
 
   try {
+    logger.userAction('back_to_topics', tgid, userInfo.username)
+    
     const user = await prisma.user.findUnique({ where: { tgid } })
     if (!user) return
 
     await showTopics(ctx, user.id, user.language as Language, true)
   } catch (error) {
-    console.error('Error going back to topics:', error)
+    logger.error('Error going back to topics', error, tgid, userInfo.username)
     const user = await prisma.user.findUnique({ where: { tgid: tgid || '' } })
     const lang = user?.language as Language || 'uz'
     await ctx.answerCbQuery(t('error', lang))
@@ -363,9 +459,12 @@ bot.action('back_to_topics', async (ctx) => {
 // Change language
 bot.action('change_language', async (ctx) => {
   const tgid = ctx.from?.id.toString()
+  const userInfo = getUserInfo(ctx)
   if (!tgid) return
 
   try {
+    logger.userAction('change_language_requested', tgid, userInfo.username)
+    
     const session = getSession(tgid)
     session.step = 'waiting_language'
     
@@ -374,22 +473,35 @@ bot.action('change_language', async (ctx) => {
       getLanguageKeyboard()
     )
   } catch (error) {
-    console.error('Error changing language:', error)
+    logger.error('Error changing language', error, tgid, userInfo.username)
     await ctx.answerCbQuery(t('error', 'uz'))
   }
 })
 
 // Broadcast new question to all users
 export async function broadcastQuestion(questionId: string) {
+  logger.botEvent('broadcast_started', { questionId })
+  
   try {
     const question = await prisma.question.findUnique({
       where: { id: questionId },
       include: { topic: true }
     })
     
-    if (!question) return
+    if (!question) {
+      logger.error('Question not found for broadcast', { questionId })
+      return
+    }
 
     const users = await prisma.user.findMany()
+    logger.info('Broadcasting question to users', {
+      questionId,
+      userCount: users.length,
+      questionText: question.nameUz
+    })
+    
+    let successCount = 0
+    let failCount = 0
     
     for (const user of users) {
       try {
@@ -416,8 +528,12 @@ export async function broadcastQuestion(questionId: string) {
           reply_markup: keyboard.reply_markup,
           parse_mode: 'HTML'
         })
+        
+        successCount++
+        logger.debug('Broadcast sent to user', { userId: user.tgid, username: user.name })
       } catch (userError) {
-        console.error(`Error broadcasting to user ${user.tgid}:`, userError)
+        failCount++
+        logger.warn('Failed to broadcast to user', userError, user.tgid, user.name)
       }
     }
 
@@ -426,9 +542,11 @@ export async function broadcastQuestion(questionId: string) {
       where: { id: questionId },
       data: { broadcasted: true }
     })
+    
+    logger.broadcastSent(questionId, users.length, successCount, failCount)
 
   } catch (error) {
-    console.error('Error broadcasting question:', error)
+    logger.error('Error broadcasting question', error, undefined, undefined)
     throw error
   }
 }
@@ -509,6 +627,8 @@ function getRegionKeyboard(language: Language) {
 
 async function showTopics(ctx: any, userId: string, language: Language, isEdit: boolean = true) {
   try {
+    logger.debug('Showing topics to user', { userId, language, isEdit })
+    
     const topics = await prisma.topic.findMany({
       include: {
         questions: true
@@ -519,6 +639,7 @@ async function showTopics(ctx: any, userId: string, language: Language, isEdit: 
     const topicsWithQuestions = topics.filter(topic => topic.questions.length > 0)
 
     if (topicsWithQuestions.length === 0) {
+      logger.info('No topics available for user', { userId, language })
       await ctx.reply(t('noTopics', language), { parse_mode: 'HTML' })
       return
     }
@@ -560,13 +681,21 @@ async function showTopics(ctx: any, userId: string, language: Language, isEdit: 
       })
     }
   } catch (error) {
-    console.error('Error showing topics:', error)
+    logger.error('Error showing topics', error, userId)
     await ctx.reply(t('topicsError', language), { parse_mode: 'HTML' })
   }
 }
 
 async function showQuestion(ctx: any, userId: string, topicId: string, questionIndex: number, language: Language, isUpdate: boolean = false) {
   try {
+    logger.debug('Showing question to user', { 
+      userId, 
+      topicId, 
+      questionIndex, 
+      language, 
+      isUpdate 
+    })
+    
     const questions = await prisma.question.findMany({
       where: { topicId },
       include: { topic: true },
@@ -627,17 +756,19 @@ async function showQuestion(ctx: any, userId: string, topicId: string, questionI
       await ctx.reply(message, messageOptions)
     }
   } catch (error) {
-    console.error('Error showing question:', error)
+    logger.error('Error showing question', error, userId)
     await ctx.reply(t('questionError', language), { parse_mode: 'HTML' })
   }
 }
 
 // Error handling
 bot.catch(async (err, ctx) => {
-  console.error('Bot error:', err)
+  const tgid = ctx.from?.id.toString()
+  const userInfo = getUserInfo(ctx)
+  
+  logger.error('Unhandled bot error', err, tgid, userInfo.username)
   
   try {
-    const tgid = ctx.from?.id.toString()
     let language: Language = 'uz'
     
     if (tgid) {
@@ -649,7 +780,7 @@ bot.catch(async (err, ctx) => {
     
     await ctx.reply(t('unexpectedError', language), { parse_mode: 'HTML' })
   } catch (error) {
-    console.error('Error in error handler:', error)
+    logger.error('Error in error handler', error, tgid, userInfo.username)
     await ctx.reply(t('unexpectedError', 'uz'))
   }
 })

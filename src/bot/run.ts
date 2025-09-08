@@ -1,38 +1,42 @@
 import 'dotenv/config'
 import bot from './index'
+import { logger } from '../lib/logger'
 
 async function startBot() {
   try {
-    console.log('🚀 Starting UzVoice Telegram Bot...')
+    logger.info('🚀 Starting UzVoice Telegram Bot...')
     
     // Check if bot token is configured
     if (!process.env.TELEGRAM_BOT_TOKEN || process.env.TELEGRAM_BOT_TOKEN === 'YOUR_BOT_TOKEN_HERE') {
-      console.error('❌ TELEGRAM_BOT_TOKEN is not configured in .env file')
+      logger.error('❌ TELEGRAM_BOT_TOKEN is not configured in .env file')
       process.exit(1)
     }
 
     // Get bot info
     const botInfo = await bot.telegram.getMe()
-    console.log(`✅ Bot connected: @${botInfo.username}`)
+    logger.info(`✅ Bot connected: @${botInfo.username}`, { 
+      botId: botInfo.id,
+      botName: botInfo.first_name 
+    })
     
     // Start polling
     await bot.launch()
     
-    console.log('🤖 Bot is running...')
-    console.log('Press Ctrl+C to stop the bot')
+    logger.info('🤖 Bot is running and listening for messages...')
+    logger.info('Press Ctrl+C to stop the bot')
 
     // Graceful stop
     process.once('SIGINT', () => {
-      console.log('\n🛑 Stopping bot...')
+      logger.warn('\n🛑 Stopping bot (SIGINT)...')
       bot.stop('SIGINT')
     })
     process.once('SIGTERM', () => {
-      console.log('\n🛑 Stopping bot...')
+      logger.warn('\n🛑 Stopping bot (SIGTERM)...')
       bot.stop('SIGTERM')  
     })
 
   } catch (error) {
-    console.error('❌ Failed to start bot:', error)
+    logger.error('❌ Failed to start bot', error)
     process.exit(1)
   }
 }
