@@ -1,0 +1,58 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+// uzvoice project models
+model User {
+  id        String   @id @default(cuid())
+  name      String
+  tgid      String   @unique // Telegram user ID
+  region    String   // Region in Uzbekistan
+  language  String   @default("uz") // User's preferred language (uz/en)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  answers   Answer[]
+}
+
+model Topic {
+  id        String     @id @default(cuid())
+  nameUz    String     // Topic name in Uzbek
+  nameEn    String     // Topic name in English
+  createdAt DateTime   @default(now())
+  updatedAt DateTime   @updatedAt
+  questions Question[]
+}
+
+model Question {
+  id          String   @id @default(cuid())
+  nameUz      String   // Question text in Uzbek
+  nameEn      String   // Question text in English
+  optionsUz   String   // JSON array of options in Uzbek
+  optionsEn   String   // JSON array of options in English
+  topicId     String
+  topic       Topic    @relation(fields: [topicId], references: [id], onDelete: Cascade)
+  broadcasted Boolean  @default(false) // Whether question was broadcasted to users
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  answers     Answer[]
+}
+
+model Answer {
+  userId     String
+  questionId String
+  option     String   // Selected option (in user's language)
+  optionKey  String   // Option index/key for consistency across languages
+  createdAt  DateTime @default(now())
+  user       User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  question   Question @relation(fields: [questionId], references: [id], onDelete: Cascade)
+
+  @@id([userId, questionId])
+}
