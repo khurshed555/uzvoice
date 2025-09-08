@@ -201,7 +201,7 @@ export default function NewQuestion({ params }: { params: Promise<{ id: string }
                 value={formData.nameUz}
                 onChange={handleChange}
                 rows={2}
-                className="mt-1 block w-full border border-gray-300 rounded-md shadow-sm py-2 px-3 focus:outline-none focus:ring-blue-500 focus:border-blue-500"
+                className="mt-1 block w-full border border-gray-300 rounded-md shadow-sm py-2 px-3 focus:outline-none focus:ring-blue-500 focus:border-blue-500 text-gray-900 placeholder-gray-500"
                 placeholder="Savol matni (Oʻzbekcha)"
               />
             </div>
@@ -217,7 +217,7 @@ export default function NewQuestion({ params }: { params: Promise<{ id: string }
                 value={formData.nameEn}
                 onChange={handleChange}
                 rows={2}
-                className="mt-1 block w-full border border-gray-300 rounded-md shadow-sm py-2 px-3 focus:outline-none focus:ring-blue-500 focus:border-blue-500"
+                className="mt-1 block w-full border border-gray-300 rounded-md shadow-sm py-2 px-3 focus:outline-none focus:ring-blue-500 focus:border-blue-500 text-gray-900 placeholder-gray-500"
                 placeholder="Question Text (English)"
               />
             </div>
@@ -239,7 +239,7 @@ export default function NewQuestion({ params }: { params: Promise<{ id: string }
                         required
                         value={optionUz}
                         onChange={(e) => handleOptionChange('uz', index, e.target.value)}
-                        className="w-full border border-gray-300 rounded-md shadow-sm py-2 px-3 focus:outline-none focus:ring-blue-500 focus:border-blue-500"
+                        className="w-full border border-gray-300 rounded-md shadow-sm py-2 px-3 focus:outline-none focus:ring-blue-500 focus:border-blue-500 text-gray-900 placeholder-gray-500"
                         placeholder={`Variant ${index + 1} (Oʻzbekcha)`}
                       />
                     </div>
@@ -253,7 +253,7 @@ export default function NewQuestion({ params }: { params: Promise<{ id: string }
                           required
                           value={formData.optionsEn[index]}
                           onChange={(e) => handleOptionChange('en', index, e.target.value)}
-                          className="w-full border border-gray-300 rounded-md shadow-sm py-2 px-3 focus:outline-none focus:ring-blue-500 focus:border-blue-500"
+                          className="w-full border border-gray-300 rounded-md shadow-sm py-2 px-3 focus:outline-none focus:ring-blue-500 focus:border-blue-500 text-gray-900 placeholder-gray-500"
                           placeholder={`Option ${index + 1} (English)`}
                         />
                       </div>
